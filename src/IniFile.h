@@ -1,31 +1,36 @@
 #ifndef _INIFILE_H
 #define _INIFILE_H
 
-#define INIFILE_VERSION "1.2.2"
+#define INIFILE_VERSION "2.0.0"
 
-// Maximum length for filename, excluding NULL char 26 chars allows an
-// 8.3 filename instead and 8.3 directory with a leading slash
-#define INI_FILE_MAX_FILENAME_LEN 26
-
-#if defined(PREFER_SDFAT_LIBRARY)
-#include "SdFat.h"
-extern SdFat SD;
-#else
-#include "SD.h"
-#endif
+#include <stdint.h>
 #include "IPAddress.h"
+#include "FS.h"
 
-class IniFileState;
-
-class IniFile {
+class IniFileState {
 public:
-#if defined(PREFER_SDFAT_LIBRARY)
-	typedef oflag_t mode_t;
-#elif defined(ARDUINO_ARCH_ESP32)
-	typedef const char* mode_t;
-#else
-	typedef uint8_t mode_t;
-#endif
+	IniFileState(const IniFileState& _other) = default;
+	IniFileState& operator= (const IniFileState& _other)
+	{
+		_file = _other._file;
+		_readLinePosition = _other._readLinePosition;
+		_buffer = _other._buffer;
+		_len = _other._len;
+
+		_error = _other._error;
+		_caseSensitive = _other._caseSensitive;
+		return *this;
+	}
+
+	IniFileState(File& iniFileObject, char* buffer, size_t len, bool caseSensitiv) :
+		 _file(iniFileObject),
+		 _buffer(buffer),
+		 _len(len),
+		 _caseSensitive(caseSensitiv)
+	{
+		_readLinePosition = 0;
+		_error = errorNoError; 
+	}
 
 	enum error_t {
 		errorNoError = 0,
@@ -36,179 +41,122 @@ public:
 		errorSectionNotFound,
 		errorKeyNotFound,
 		errorEndOfFile,
+		errorValueTruncated,
+		errorFormatError,
 		errorUnknownError,
 	};
 
-	static const uint8_t maxFilenameLen;
+	inline error_t getError() const
+	{
+		return _error;
+	}
 
-	// Create an IniFile object. It isn't opened until open() is called on it.
-	IniFile(const char* filename, mode_t mode = FILE_READ,
-			bool caseSensitive = false);
-	~IniFile();
+	inline void clearError(void) const
+	{
+		_error = errorNoError;
+	}
 
-	inline bool open(void); // Returns true if open succeeded
-	inline void close(void);
+	inline bool getCaseSensitive(void) const
+	{
+		return _caseSensitive;
+	}
 
-	inline bool isOpen(void) const;
+	inline void setCaseSensitive(bool cs)
+	{
+		_caseSensitive = cs;		
+	}
 
-	inline error_t getError(void) const;
-	inline void clearError(void) const;
-	// Get the file mode (FILE_READ/FILE_WRITE)
-	inline mode_t getMode(void) const;
+protected:
+	File& _file;
+	uint32_t _readLinePosition;
+	char* _buffer;
+	size_t _len;
 
-	// Get the filename asscoiated with the ini file object
-	inline const char* getFilename(void) const;
+	mutable error_t _error;
+	bool _caseSensitive;
 
-	bool validate(char* buffer, size_t len) const;
+	friend class IniFile;
+};
 
-	// Get value from the file, but split into many short tasks. Return
-	// value: false means continue, true means stop. Call getError() to
-	// find out if any error
-	bool getValue(const char* section, const char* key,
-				  char* buffer, size_t len, IniFileState &state) const;
+class IniFileSectionKey;
+class IniFileSection : public IniFileState {
+public:
+	IniFileSection(File& iniFileObject, char* buffer, size_t len, bool caseSensitiv) :
+		IniFileState(iniFileObject, buffer, len, caseSensitiv) {}
 
-	// Get value, as one big task. Return = true means value is present
-	// in buffer
-	bool getValue(const char* section, const char* key,
-				  char* buffer, size_t len) const;
+	IniFileSection(const IniFileState& _iniFileState) : IniFileState(_iniFileState) {}
 
-	// Get the value as a string, storing the result in a new buffer
-	// (not the working buffer)
-	bool getValue(const char* section, const char* key,
-				  char* buffer, size_t len, char *value, size_t vlen) const;
+	IniFileSection& operator=(const IniFileSection& rhs)
+	{
+		((IniFileState&) (*this))  = (const IniFileState&) rhs;
+	}
 
-	// Get a boolean value
-	bool getValue(const char* section, const char* key,
-				  char* buffer, size_t len, bool& b) const;
+	// get a key from a section
+	IniFileSectionKey findKey(const char* key);
+	//const IniFileSectionKey& findKey_P(PGM_P key);
 
-	// Get an integer value
-	bool getValue(const char* section, const char* key,
-				  char* buffer, size_t len, int& val) const;
-				  
-	// Get a double value
-	bool getValue(const char* section, const char* key,
-				  char* buffer, size_t len, double& val) const;
+private:
+	typedef int comparefunc(const char*, const char*, size_t);
+	char*  __findKey(const char* key, comparefunc* _cmpfunc);
 
-	// Get a uint8_t value
-	bool getValue(const char* section, const char* key,
-				  char* buffer, size_t len, uint8_t& val) const;
+	friend class IniFile;
+};
 
-	// Get a uint16_t value
-	bool getValue(const char* section, const char* key,
-				  char* buffer, size_t len, uint16_t& val) const;
+class IniFileSectionKey {
+public:
+	IniFileSectionKey(char *thebuffer) : _buffer(thebuffer) {}
+	IniFileSectionKey(const IniFileSectionKey& other) : _buffer(other._buffer) {}
 
-	// Get a long value
-	bool getValue(const char* section, const char* key,
-				  char* buffer, size_t len, long& val) const;
+	// get value as string
+	IniFileState::error_t getValue(char* toBuffer, size_t len) const;
 
-	bool getValue(const char* section, const char* key,
-				  char* buffer, size_t len, unsigned long& val) const;
+	// get it as numeric value
+	template <typename T>
+	IniFileState::error_t getValue(T&) const;
 
-	// Get a float value
-	bool getValue(const char* section, const char* key,
-				  char* buffer, size_t len, float& val) const;
-
-	bool getIPAddress(const char* section, const char* key,
-					  char* buffer, size_t len, uint8_t* ip) const;
+	// Get an array of numeric bytes with a given seperator,
+	// e.g. an IP address 192.168.0.1 with separator "."
+	IniFileState::error_t getNumericByteArray(uint8_t* array, size_t& alen, const char* seperators) const;
+	// same as above but treat numerbers as hex without prefix
+	// e.g. a MAC adress 12:34:56:78:9a:bc
+	IniFileState::error_t getHexByteArray(uint8_t* array, size_t& alen, const char* seperators) const;
 
 #if defined(ARDUINO) && ARDUINO >= 100
-	bool getIPAddress(const char* section, const char* key,
-					  char* buffer, size_t len, IPAddress& ip) const;
+	IniFileState::error_t getIPAddress(IPAddress& ip) const;
 #endif
 
-	bool getMACAddress(const char* section, const char* key,
-					   char* buffer, size_t len, uint8_t mac[6]) const;
+private:
+	char *_buffer;
+	friend class IniFile;
+	friend class IniFileSection;
+	IniFileState::error_t __str_to_numeric(int64_t &value) const;
+	IniFileState::error_t __str_to_numeric(uint64_t &value) const;
+	IniFileState::error_t __str_to_numeric(uint8_t* array, size_t& alen, const char* seperators, uint8_t base) const;
+};
+
+class IniFile : protected IniFileSection {
+public:
+
+	// Create an IniFile object. iniFileObject& is an open File object to read from
+	IniFile(File& iniFileObject, char* buffer, size_t len, bool caseSensitive = false);
+	~IniFile() = default;
+
+	// check if file is valid
+	IniFileState::error_t validate() const;
+
+	// find a section from the file
+	const IniFileSection& findSection(const char* section);
+	//const IniFileSection& findSection_P(PGM_P section);
 
 	// Utility function to read a line from a file, make available to all
-	//static int8_t readLine(File &file, char *buffer, size_t len, uint32_t &pos);
 	static error_t readLine(File &file, char *buffer, size_t len, uint32_t &pos);
 	static bool isCommentChar(char c);
 	static char* skipWhiteSpace(char* str);
 	static void removeTrailingWhiteSpace(char* str);
 
-	bool getCaseSensitive(void) const;
-	void setCaseSensitive(bool cs);
-
-protected:
-	// True means stop looking, false means not yet found
-	bool findSection(const char* section, char* buffer, size_t len,
-					 IniFileState &state) const;
-	bool findKey(const char* section, const char* key, char* buffer,
-				 size_t len, char** keyptr, IniFileState &state) const;
-
-
 private:
-	char _filename[INI_FILE_MAX_FILENAME_LEN];
-	mode_t _mode;
-	mutable error_t _error;
-	mutable File _file;
-	bool _caseSensitive;
+	typedef int comparefunc(const char*, const char*, size_t);
+	const void __findSection(const char* section, comparefunc* _cmpfunc);
 };
-
-bool IniFile::open(void)
-{
-	if (_file)
-		_file.close();
-	_file = SD.open(_filename, _mode);
-	if (isOpen()) {
-		_error = errorNoError;
-		return true;
-	}
-	else {
-		_error = errorFileNotFound;
-		return false;
-	}
-}
-
-void IniFile::close(void)
-{
-	if (_file)
-		_file.close();
-}
-
-bool IniFile::isOpen(void) const
-{
-	return (_file == true);
-}
-
-IniFile::error_t IniFile::getError(void) const
-{
-	return _error;
-}
-
-void IniFile::clearError(void) const
-{
-	_error = errorNoError;
-}
-
-IniFile::mode_t IniFile::getMode(void) const
-{
-	return _mode;
-}
-
-const char* IniFile::getFilename(void) const
-{
-	return _filename;
-}
-
-
-
-class IniFileState {
-public:
-	IniFileState();
-
-private:
-	enum {funcUnset = 0,
-		  funcFindSection,
-		  funcFindKey,
-	};
-
-	uint32_t readLinePosition;
-	uint8_t getValueState;
-
-	friend class IniFile;
-};
-
 
 #endif
-

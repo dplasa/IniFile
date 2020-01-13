@@ -1,338 +1,449 @@
 #include "IniFile.h"
 
+#include <stdlib.h>
+#include <ctype.h>
 #include <string.h>
+#include <FS.h>
 
-const uint8_t IniFile::maxFilenameLen = INI_FILE_MAX_FILENAME_LEN;
-
-IniFile::IniFile(const char* filename, mode_t mode,
-				 bool caseSensitive)
+IniFile::IniFile(File& iniFileObject, char* buffer, size_t len, bool caseSensitiv) : 
+	IniFileSection(iniFileObject, buffer, len, caseSensitiv)
 {
-	if (strlen(filename) <= maxFilenameLen)
-		strcpy(_filename, filename);
-	else
-		_filename[0] = '\0';
-	_mode = mode;
-	_caseSensitive = caseSensitive;
 }
 
-IniFile::~IniFile()
-{
-	//if (_file)
-	//  _file.close();
-}
-
-
-bool IniFile::validate(char* buffer, size_t len) const
+IniFileState::error_t IniFile::validate() const
 {
 	uint32_t pos = 0;
 	error_t err;
-	while ((err = readLine(_file, buffer, len, pos)) == errorNoError)
+	while ((err = readLine(_file, _buffer, _len, pos)) == errorNoError)
 		;
 	if (err == errorEndOfFile) {
-		_error = errorNoError;
-		return true;
+		return _error = errorNoError;
 	}
 	else {
-		_error = err;
-		return false;
+		return _error = err;
 	}
 }
 
-bool IniFile::getValue(const char* section, const char* key,
-					   char* buffer, size_t len, IniFileState &state) const
+const IniFileSection& IniFile::findSection(const char* section)
 {
+	comparefunc* f = (_caseSensitive ? &strncmp : &strncasecmp);
+	__findSection(section, f);
+	return (const IniFileSection&)(*this);
+}
+/*
+const IniFileSection& IniFile::findSection_P(PGM_P section)
+{
+	comparefunc* f = (comparefunc*)(_caseSensitive ? &strncmp_P : &strncasecmp_P);
+	__findSection(section, f);
+	return (const IniFileSection&)(*this);
+}
+*/
+
+const void IniFile::__findSection(const char* section, comparefunc* _cmpfunc)
+{
+	// start at position 0
+	_readLinePosition = 0;
+
+	// if no section is provided we're all good,
+	// sectionless keys must be at the beginning of file
+	if (section == NULL || 0==_cmpfunc("", section, SIZE_IRRELEVANT))
+	{
+		_error = errorNoError;
+		return;		
+	}
+
+	// go line by line through the file
+	// find if line contains [section]
+	// if so, _readLinePosition is the file's line position 
+	// where the keys of the section start
 	char *cp = nullptr;
-	bool done = false;
-	if (!_file) {
-		_error = errorFileNotOpen;
-		return true;
-	}
+	for (;;)
+	{
+		_error = IniFile::readLine(_file, _buffer, _len, _readLinePosition);
 
-	switch (state.getValueState) {
-	case IniFileState::funcUnset:
-		state.getValueState = (section == NULL ? IniFileState::funcFindKey
-							   : IniFileState::funcFindSection);
-		state.readLinePosition = 0;
-		break;
-
-	case IniFileState::funcFindSection:
-		if (findSection(section, buffer, len, state)) {
-			if (_error != errorNoError)
-				return true;
-			state.getValueState = IniFileState::funcFindKey;
+		if (_error != errorNoError) 
+		{
+			// something happened, most likely EOF
+			break;
 		}
-		break;
 
-	case IniFileState::funcFindKey:
-		if (findKey(section, key, buffer, len, &cp, state)) {
-			if (_error != errorNoError)
-				return true;
-			// Found key line in correct section
-			cp = skipWhiteSpace(cp);
-			removeTrailingWhiteSpace(cp);
+		// skip whitespaces
+		cp = skipWhiteSpace(_buffer);
 
-			// Copy from cp to buffer, but the strings overlap so strcpy is out
-			while (*cp != '\0')
-				*buffer++ = *cp++;
-			*buffer = '\0';
-			return true;
-		}
-		break;
+		// skip comment
+		if (isCommentChar(*cp)) 
+			continue;
 
-	default:
-		// How did this happen?
-		_error = errorUnknownError;
-		done = true;
-		break;
-	}
-
-	return done;
-}
-
-bool IniFile::getValue(const char* section, const char* key,
-					   char* buffer, size_t len) const
-{
-	IniFileState state;
-	while (!getValue(section, key, buffer, len, state))
-		;
-	return _error == errorNoError;
-}
-
-
-bool IniFile::getValue(const char* section, const char* key,
-					   char* buffer, size_t len, char *value, size_t vlen) const
-{
-	if (!getValue(section, key, buffer, len))
-		return false; // error
-	if (strlen(buffer) >= vlen)
-		return false;
-	strcpy(value, buffer);
-	return true;
-}
-
-
-// For true accept: true, yes, 1
-// For false accept: false, no, 0
-bool IniFile::getValue(const char* section, const char* key,
-					   char* buffer, size_t len, bool& val) const
-{
-	if (!getValue(section, key, buffer, len))
-		return false; // error
-
-	if (strcasecmp(buffer, "true") == 0 ||
-		strcasecmp(buffer, "yes") == 0 ||
-		strcasecmp(buffer, "1") == 0) {
-		val = true;
-		return true;
-	}
-	if (strcasecmp(buffer, "false") == 0 ||
-		strcasecmp(buffer, "no") == 0 ||
-		strcasecmp(buffer, "0") == 0) {
-		val = false;
-		return true;
-	}
-	return false; // does not match any known strings
-}
-
-bool IniFile::getValue(const char* section, const char* key,
-					   char* buffer, size_t len, int& val) const
-{
-	if (!getValue(section, key, buffer, len))
-		return false; // error
-
-	val = atoi(buffer);
-	return true;
-}
-
-bool IniFile::getValue(const char* section, const char* key,
-					   char* buffer, size_t len, double& val) const
-{
-	if (!getValue(section, key, buffer, len))
-		return false; // error
-
-	val = atof(buffer);
-	return true;
-}
-
-bool IniFile::getValue(const char* section, const char* key,
-					   char* buffer, size_t len, uint8_t& val) const
-{
-	long longval;
-	bool r = getValue(section, key, buffer, len, longval);
-	if (r)
-		val = uint8_t(longval);
-	return r;
-}
-
-bool IniFile::getValue(const char* section, const char* key,
-					   char* buffer, size_t len, uint16_t& val) const
-{
-	long longval;
-	bool r = getValue(section, key, buffer, len, longval);
-	if (r)
-		val = uint16_t(longval);
-	return r;
-}
-
-bool IniFile::getValue(const char* section, const char* key,
-					   char* buffer, size_t len, long& val) const
-{
-	if (!getValue(section, key, buffer, len))
-		return false; // error
-
-	val = atol(buffer);
-	return true;
-}
-
-bool IniFile::getValue(const char* section, const char* key,
-					   char* buffer, size_t len, unsigned long& val) const
-{
-	if (!getValue(section, key, buffer, len))
-		return false; // error
-
-	char *endptr;
-	unsigned long tmp = strtoul(buffer, &endptr, 10);
-	if (endptr == buffer)
-		return false; // no conversion
-	if (*endptr == '\0') {
-		val = tmp;
-		return true; // valid conversion
-	}
-	// buffer has trailing non-numeric characters, and since the buffer
-	// already had whitespace removed discard the entire results
-	return false;
-}
-
-
-bool IniFile::getValue(const char* section, const char* key,
-					   char* buffer, size_t len, float & val) const
-{
-	if (!getValue(section, key, buffer, len))
-		return false; // error
-
-	char *endptr;
-	float tmp = strtod(buffer, &endptr);
-	if (endptr == buffer)
-		return false; // no conversion
-	if (*endptr == '\0') {
-		val = tmp;
-		return true; // valid conversion
-	}
-	// buffer has trailing non-numeric characters, and since the buffer
-	// already had whitespace removed discard the entire results
-	return false;
-}
-
-
-bool IniFile::getIPAddress(const char* section, const char* key,
-						   char* buffer, size_t len, uint8_t* ip) const
-{
-	// Need 16 chars minimum: 4 * 3 digits, 3 dots and a null character
-	if (len < 16)
-		return false;
-
-	if (!getValue(section, key, buffer, len))
-		return false; // error
-
-	int i = 0;
-	char* cp = buffer;
-	ip[0] = ip[1] = ip[2] = ip[3] = 0;
-	while (*cp != '\0' && i < 4) {
-		if (*cp == '.') {
-			++i;
+		if (*cp == '[') 
+		{
+			// Start of section
 			++cp;
+			cp = skipWhiteSpace(cp);
+			char *ep = strchr(cp, ']');
+			if (ep != NULL) 
+			{
+				*ep = '\0'; // make ] be end of string
+				removeTrailingWhiteSpace(cp);
+				if (_cmpfunc(cp, section, SIZE_IRRELEVANT) == 0) 
+				{
+					_error = errorNoError;
+					break;
+				}
+			}
+		}
+	}
+}
+
+// From the current file location look for the matching key. If
+IniFileSectionKey IniFileSection::findKey(const char* key)
+{
+	comparefunc* f = (_caseSensitive ? &strncmp : &strncasecmp);
+	char* c= __findKey(key, f);
+	return IniFileSectionKey(c);
+}
+
+// IniFileSectionKey IniFileSection::findKey_P(PGM_P key)
+// {
+// 	comparefunc* f = (comparefunc*)(_caseSensitive ? &strncmp_P : &strncasecmp_P);
+// 	const char* c= __findKey(key, f);
+// 	return IniFileSectionKey(c);
+// }
+
+char* IniFileSection::__findKey(const char* key, comparefunc* _cmpfunc)
+{
+	// can only search key, if we have found the section
+	if (_error != errorNoError && _error != errorKeyNotFound)
+		return NULL;
+
+	if (key == NULL || 0==_cmpfunc("", key, SIZE_IRRELEVANT)) 
+	{
+		_error = errorKeyNotFound;
+		return NULL;
+	}
+
+	// go line by line through the file
+	// find if line contains key=...
+	char *cp = nullptr;
+	// read next line from current readLinePosition
+	uint32_t pos = _readLinePosition;
+
+	for (;;)
+	{
+		error_t err = IniFile::readLine(_file, _buffer, _len, pos);
+
+		if (err != errorNoError) 
+		{
+			// something happened, most likely EOF
+			break;
+		}
+
+		// skip whitespaces
+		cp = IniFile::skipWhiteSpace(_buffer);
+
+		// skip comment
+		if (IniFile::isCommentChar(*cp)) 
+			continue;
+
+		if (*cp == '[') 
+		{
+			// Start of a new section
+			_error = errorKeyNotFound;
+			return NULL;
+		}
+
+		// Find '='
+		char *ep = strchr(cp, '=');
+		if (ep != NULL) 
+		{
+			*ep = '\0'; // make '=' be the end of string
+			// cut off any white spaces
+			IniFile::removeTrailingWhiteSpace(cp);
+			if (_cmpfunc(cp, key, SIZE_IRRELEVANT) == 0) 
+			{
+				// key found, trim value
+				cp = IniFile::skipWhiteSpace(ep+1);
+
+				// cut comments in value, cp=(ep+1) beginning of value after '='
+				ep = cp;
+				while (*ep)
+				{
+					if (IniFile::isCommentChar(*ep))
+					{
+						*ep = '\0';
+						break; 
+					}
+					++ep;
+				}
+				// cut off trailing white spaces
+				IniFile::removeTrailingWhiteSpace(cp);
+				_error = errorNoError;
+				return cp;
+			}
 			continue;
 		}
-		if (isdigit(*cp)) {
-			ip[i] *= 10;
-			ip[i] += (*cp - '0');
-		}
-		else {
-			ip[0] = ip[1] = ip[2] = ip[3] = 0;
-			return false;
-		}
-		++cp;
 	}
-	return true;
+	return NULL;
 }
 
+IniFileState::error_t IniFileSectionKey::getValue(char* toBuffer, size_t toLen) const
+{
+	if (_buffer == NULL)
+		return IniFileState::errorKeyNotFound;
+
+	if (strlen(_buffer) >= toLen)
+		return IniFileState::errorBufferTooSmall;
+
+	strcpy(toBuffer, _buffer);
+	return IniFileState::errorNoError;
+}
+
+template<>
+IniFileState::error_t IniFileSectionKey::getValue(int8_t& val) const
+{
+	int64_t tmp;
+	IniFileState::error_t err = __str_to_numeric(tmp);
+	if (err == IniFileState::errorNoError)
+	{
+		val = tmp;
+		if (val != tmp)
+			err = IniFileState::errorValueTruncated;
+	}
+	return err;
+}
+
+template<>
+IniFileState::error_t IniFileSectionKey::getValue(int16_t& val) const
+{
+	int64_t tmp;
+	IniFileState::error_t err = __str_to_numeric(tmp);
+	if (err == IniFileState::errorNoError)
+	{
+		val = tmp;
+		if (val != tmp)
+			err = IniFileState::errorValueTruncated;
+	}
+	return err;
+}
+
+template<>
+IniFileState::error_t IniFileSectionKey::getValue(int32_t& val) const
+{
+	int64_t tmp;
+	IniFileState::error_t err = __str_to_numeric(tmp);
+	if (err == IniFileState::errorNoError)
+	{
+		val = tmp;
+		if (val != tmp)
+			err = IniFileState::errorValueTruncated;
+	}
+	return err;
+}
+
+template<>
+IniFileState::error_t IniFileSectionKey::getValue(int64_t& val) const
+{
+	return __str_to_numeric(val);
+}
+
+template<>
+IniFileState::error_t IniFileSectionKey::getValue(uint8_t& val) const
+{
+	uint64_t tmp;
+	IniFileState::error_t err = __str_to_numeric(tmp);
+	if (err == IniFileState::errorNoError)
+	{
+		val = tmp;
+		if (val != tmp)
+			err = IniFileState::errorValueTruncated;
+	}
+	return err;
+}
+
+template<>
+IniFileState::error_t IniFileSectionKey::getValue(uint16_t& val) const
+{
+	uint64_t tmp;
+	IniFileState::error_t err = __str_to_numeric(tmp);
+	if (err == IniFileState::errorNoError)
+	{
+		val = tmp;
+		if (val != tmp)
+			err = IniFileState::errorValueTruncated;
+	}
+	return err;
+}
+
+template<>
+IniFileState::error_t IniFileSectionKey::getValue(uint32_t& val) const
+{
+	uint64_t tmp;
+	IniFileState::error_t err = __str_to_numeric(tmp);
+	if (err == IniFileState::errorNoError)
+	{
+		val = tmp;
+		if (val != tmp)
+			err = IniFileState::errorValueTruncated;
+	}
+	return err;
+}
+
+template<>
+IniFileState::error_t IniFileSectionKey::getValue(uint64_t& val) const
+{
+	return __str_to_numeric(val);
+}
+
+template<>
+IniFileState::error_t IniFileSectionKey::getValue(bool& val) const
+{
+	if (_buffer == NULL)
+		return IniFileState::errorKeyNotFound;
+
+	// For true accept: true, yes, 1
+	// For false accept: false, no, 0
+	if (strcasecmp_P(_buffer, PSTR("true")) == 0 ||
+		strcasecmp_P(_buffer, PSTR("yes")) == 0 ||
+		strcasecmp_P(_buffer, PSTR("1")) == 0) {
+		val = true;
+		return IniFileState::errorNoError; // valid conversion
+	}
+	if (strcasecmp_P(_buffer, PSTR("false")) == 0 ||
+		strcasecmp_P(_buffer, PSTR("no")) == 0 ||
+		strcasecmp_P(_buffer, PSTR("0")) == 0) {
+		val = false;
+		return IniFileState::errorNoError; // valid conversion
+	}
+	return IniFileState::errorFormatError;
+}
+
+IniFileState::error_t IniFileSectionKey::__str_to_numeric(int64_t &value) const
+{
+	if (_buffer == NULL)
+		return IniFileState::errorKeyNotFound;
+	char *endptr;
+	value = strtoll(_buffer, &endptr, 0 /* convert to any base */);
+	if (*endptr == '\0') 
+	{
+		return IniFileState::errorNoError; // valid conversion
+	}
+	// either  (endptr == buffer) --> no conversion 
+	// or
+	// buffer has trailing non-numeric characters, and since the buffer
+	// already had whitespace removed discard the entire results
+	return IniFileState::errorFormatError;
+}
+
+IniFileState::error_t IniFileSectionKey::__str_to_numeric(uint64_t &value) const
+{
+	if (_buffer == NULL)
+		return IniFileState::errorKeyNotFound;
+	char *endptr;
+	value = strtoull(_buffer, &endptr, 0 /* convert to any base */);
+	if (*endptr == '\0') 
+	{
+		return IniFileState::errorNoError; // valid conversion
+	}
+	// either  (endptr == buffer) --> no conversion 
+	// or
+	// buffer has trailing non-numeric characters, and since the buffer
+	// already had whitespace removed discard the entire results
+	return IniFileState::errorFormatError;
+}
+
+template<>
+IniFileState::error_t IniFileSectionKey::getValue(float& value) const
+{
+	if (_buffer == NULL)
+		return IniFileState::errorKeyNotFound;
+
+	char *endptr;
+	value = strtof(_buffer, &endptr);
+	if (*endptr == '\0') {
+		return IniFileState::errorNoError; // valid conversion
+	}
+	// either  (endptr == buffer) --> no conversion 
+	// or
+	// buffer has trailing non-numeric characters, and since the buffer
+	// already had whitespace removed discard the entire results
+	return IniFileState::errorFormatError;
+}
+
+template<>
+IniFileState::error_t IniFileSectionKey::getValue(double& value) const
+{
+	if (_buffer == NULL)
+		return IniFileState::errorKeyNotFound;
+
+	char *endptr;
+	value = strtod(_buffer, &endptr);
+	if (*endptr == '\0') {
+		return IniFileState::errorNoError; // valid conversion
+	}
+	// either  (endptr == buffer) --> no conversion 
+	// or
+	// buffer has trailing non-numeric characters, and since the buffer
+	// already had whitespace removed discard the entire results
+	return IniFileState::errorFormatError;
+}
+
+IniFileState::error_t IniFileSectionKey::getNumericByteArray(uint8_t* array, size_t& alen, const char* seperators) const
+{
+	return __str_to_numeric(array, alen, seperators, 0);
+}
+
+IniFileState::error_t IniFileSectionKey::getHexByteArray(uint8_t* array, size_t& alen, const char* seperators) const
+{
+	return __str_to_numeric(array, alen, seperators, 16);
+}
 
 #if defined(ARDUINO) && ARDUINO >= 100
-bool IniFile::getIPAddress(const char* section, const char* key,
-						   char* buffer, size_t len, IPAddress& ip) const
+IniFileState::error_t IniFileSectionKey::getIPAddress(IPAddress& ip) const
 {
-	// Need 16 chars minimum: 4 * 3 digits, 3 dots and a null character
-	if (len < 16)
-		return false;
-
-	if (!getValue(section, key, buffer, len))
-		return false; // error
-
-	int i = 0;
-	char* cp = buffer;
-	ip = IPAddress(0, 0, 0, 0);
-	while (*cp != '\0' && i < 4) {
-		if (*cp == '.') {
-			++i;
-			++cp;
-			continue;
-		}
-		if (isdigit(*cp)) {
-			ip[i] *= 10;
-			ip[i] += (*cp - '0');
-		}
-		else {
-			ip = IPAddress(0, 0, 0, 0);
-			return false;
-		}
-		++cp;
+	size_t alen = 4;
+	IniFileState::error_t err = __str_to_numeric(&(ip[0]), alen, ".", 0);
+	if (err == IniFileState::errorNoError)
+	{
+		if (4 != alen)
+			err = IniFileState::errorFormatError;
 	}
-	return true;
+	return err;
 }
 #endif
 
-bool IniFile::getMACAddress(const char* section, const char* key,
-							char* buffer, size_t len, uint8_t mac[6]) const
+IniFileState::error_t IniFileSectionKey::__str_to_numeric(uint8_t* array, 
+	size_t& alen, const char* seperators, uint8_t base) const
 {
-	// Need 18 chars: 6 * 2 hex digits, 5 : or - and a null char
-	if (len < 18)
-		return false;
+	if (_buffer == NULL)
+		return IniFileState::errorKeyNotFound;
 
-	if (!getValue(section, key, buffer, len))
-		return false; // error
+	// tokenize the string
+	char* token = strtok(_buffer, seperators);
 
-	int i = 0;
-	char* cp = buffer;
-	memset(mac, 0, 6);
-
-	while (*cp != '\0' && i < 6) {
-		if (*cp == ':' || *cp == '-') {
-			++i;
-			++cp;
-			continue;
+	size_t i = 0;
+	for (; (token!=NULL) && (i < alen); ++i)
+	{
+		char* endptr;
+		uint64_t tmp = strtoull(token, &endptr, base);
+		if ((endptr == token) || (*endptr != '\0')) 
+		{
+			alen = i;
+			return IniFileState::errorFormatError; // invalid conversion
 		}
-		if (isdigit(*cp)) {
-			mac[i] *= 16; // working in hex!
-			mac[i] += (*cp - '0');
+		array[i] = tmp;
+		if (!(array[i] == tmp))
+		{
+			alen = i;
+			return IniFileState::errorValueTruncated;
 		}
-		else {
-			if (isxdigit(*cp)) {
-				mac[i] *= 16; // working in hex!
-				mac[i] += (toupper(*cp) - 55); // convert A to 0xA, F to 0xF
-			}
-			else {
-				memset(mac, 0, 6);
-				return false;
-			}
-		}
-		++cp;
+		token = strtok(NULL, seperators);
 	}
-	return true;
+	alen = i;
+	return IniFileState::errorNoError;
 }
 
-//int8_t IniFile::readLine(File &file, char *buffer, size_t len, uint32_t &pos)
 IniFile::error_t IniFile::readLine(File &file, char *buffer, size_t len, uint32_t &pos)
 {
+	printf("Call readline(..., pos=%u)\n", pos);
 	if (!file)
 		return errorFileNotOpen;
 
@@ -345,17 +456,15 @@ IniFile::error_t IniFile::readLine(File &file, char *buffer, size_t len, uint32_
 #if defined(ARDUINO_ARCH_ESP32) && !defined(PREFER_SDFAT_LIBRARY)
 	size_t bytesRead = file.readBytes(buffer, len);
 #else
-	size_t bytesRead = file.read(buffer, len);
+	size_t bytesRead = file.read((uint8_t*)buffer, len);
 #endif
 	if (!bytesRead) {
 		buffer[0] = '\0';
-		//return 1; // done
 		return errorEndOfFile;
 	}
 
 	for (size_t i = 0; i < bytesRead && i < len-1; ++i) {
 		// Test for '\n' with optional '\r' too
-		// if (endOfLineTest(buffer, len, i, '\n', '\r')
 
 		if (buffer[i] == '\n' || buffer[i] == '\r') {
 			char match = buffer[i];
@@ -371,11 +480,12 @@ IniFile::error_t IniFile::readLine(File &file, char *buffer, size_t len, uint32_
 			return errorNoError;
 		}
 	}
+
 	if (!file.available()) {
 		// end of file without a newline
 		buffer[bytesRead] = '\0';
-		// return 1; //done
-		return errorEndOfFile;
+		pos += bytesRead;
+		return errorNoError;
 	}
 
 	buffer[len-1] = '\0'; // terminate the string
@@ -403,146 +513,4 @@ void IniFile::removeTrailingWhiteSpace(char* str)
 	char *cp = str + strlen(str) - 1;
 	while (cp >= str && isspace(*cp))
 		*cp-- = '\0';
-}
-
-bool IniFile::findSection(const char* section, char* buffer, size_t len,
-						  IniFileState &state) const
-{
-	if (section == NULL) {
-		_error = errorSectionNotFound;
-		return true;
-	}
-
-	error_t err = IniFile::readLine(_file, buffer, len, state.readLinePosition);
-
-	if (err != errorNoError && err != errorEndOfFile) {
-		// Signal to caller to stop looking and any error value
-		_error = err;
-		return true;
-	}
-
-	char *cp = skipWhiteSpace(buffer);
-	//if (isCommentChar(*cp))
-	//return (done ? errorSectionNotFound : 0);
-	if (isCommentChar(*cp)) {
-		// return (err == errorEndOfFile ? errorSectionNotFound : errorNoError);
-		if (err == errorEndOfFile) {
-			_error = errorSectionNotFound;
-			return true;
-		}
-		else
-			return false; // Continue searching
-	}
-
-	if (*cp == '[') {
-		// Start of section
-		++cp;
-		cp = skipWhiteSpace(cp);
-		char *ep = strchr(cp, ']');
-		if (ep != NULL) {
-			*ep = '\0'; // make ] be end of string
-			removeTrailingWhiteSpace(cp);
-			if (_caseSensitive) {
-				if (strcmp(cp, section) == 0) {
-					_error = errorNoError;
-					return true;
-				}
-			}
-			else {
-				if (strcasecmp(cp, section) == 0) {
-					_error = errorNoError;
-					return true;
-				}
-			}
-		}
-	}
-
-	// Not a valid section line
-	//return (done ? errorSectionNotFound : 0);
-	if (err == errorEndOfFile) {
-		_error = errorSectionNotFound;
-		return true;
-	}
-
-	return false;
-}
-
-// From the current file location look for the matching key. If
-// section is non-NULL don't look in the next section
-bool IniFile::findKey(const char* section, const char* key,
-					  char* buffer, size_t len, char** keyptr,
-					  IniFileState &state) const
-{
-	if (key == NULL || *key == '\0') {
-		_error = errorKeyNotFound;
-		return true;
-	}
-
-	error_t err = IniFile::readLine(_file, buffer, len, state.readLinePosition);
-	if (err != errorNoError && err != errorEndOfFile) {
-		_error = err;
-		return true;
-	}
-
-	char *cp = skipWhiteSpace(buffer);
-	// if (isCommentChar(*cp))
-	//   return (done ? errorKeyNotFound : 0);
-	if (isCommentChar(*cp)) {
-		if (err == errorEndOfFile) {
-			_error = errorKeyNotFound;
-			return true;
-		}
-		else
-			return false; // Continue searching
-	}
-
-	if (section && *cp == '[') {
-		// Start of a new section
-		_error = errorKeyNotFound;
-		return true;
-	}
-
-	// Find '='
-	char *ep = strchr(cp, '=');
-	if (ep != NULL) {
-		*ep = '\0'; // make = be the end of string
-		removeTrailingWhiteSpace(cp);
-		if (_caseSensitive) {
-			if (strcmp(cp, key) == 0) {
-				*keyptr = ep + 1;
-				_error = errorNoError;
-				return true;
-			}
-		}
-		else {
-			if (strcasecmp(cp, key) == 0) {
-				*keyptr = ep + 1;
-				_error = errorNoError;
-				return true;
-			}
-		}
-	}
-
-	// Not the valid key line
-	if (err == errorEndOfFile) {
-		_error = errorKeyNotFound;
-		return true;
-	}
-	return false;
-}
-
-bool IniFile::getCaseSensitive(void) const
-{
-	return _caseSensitive;
-}
-
-void IniFile::setCaseSensitive(bool cs)
-{
-	_caseSensitive = cs;
-}
-
-IniFileState::IniFileState()
-{
-	readLinePosition = 0;
-	getValueState = funcUnset;
 }
