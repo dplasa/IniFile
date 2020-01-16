@@ -4,8 +4,8 @@
 #define INIFILE_VERSION "2.0.0"
 
 #include <stdint.h>
-#include "IPAddress.h"
-#include "FS.h"
+#include <IPAddress.h>
+#include <FS.h>
 
 class IniFileState {
 public:
@@ -34,7 +34,6 @@ public:
 
 	enum error_t {
 		errorNoError = 0,
-		errorFileNotFound,
 		errorFileNotOpen,
 		errorBufferTooSmall,
 		errorSeekError,
@@ -89,15 +88,16 @@ public:
 	IniFileSection& operator=(const IniFileSection& rhs)
 	{
 		((IniFileState&) (*this))  = (const IniFileState&) rhs;
+		return *this;
 	}
 
 	// get a key from a section
-	IniFileSectionKey findKey(const char* key);
-	//const IniFileSectionKey& findKey_P(PGM_P key);
+	IniFileSectionKey findKey(const char* key, bool withinSection=true);
+	IniFileSectionKey findKey_P(PGM_P key, bool withinSection=true);
 
 private:
 	typedef int comparefunc(const char*, const char*, size_t);
-	char*  __findKey(const char* key, comparefunc* _cmpfunc);
+	char*  __findKey(const char* key, comparefunc* _cmpfunc, bool withinSection=true);
 
 	friend class IniFile;
 };
@@ -107,8 +107,16 @@ public:
 	IniFileSectionKey(char *thebuffer) : _buffer(thebuffer) {}
 	IniFileSectionKey(const IniFileSectionKey& other) : _buffer(other._buffer) {}
 
-	// get value as string
-	IniFileState::error_t getValue(char* toBuffer, size_t len) const;
+	// check is key was found
+	inline operator bool() const
+	{
+		return _buffer != NULL;
+	}
+
+	inline operator const char*() const
+	{
+		return _buffer;
+	}
 
 	// get it as numeric value
 	template <typename T>
@@ -146,7 +154,7 @@ public:
 
 	// find a section from the file
 	const IniFileSection& findSection(const char* section);
-	//const IniFileSection& findSection_P(PGM_P section);
+	const IniFileSection& findSection_P(PGM_P section);
 
 	// Utility function to read a line from a file, make available to all
 	static error_t readLine(File &file, char *buffer, size_t len, uint32_t &pos);
@@ -156,7 +164,7 @@ public:
 
 private:
 	typedef int comparefunc(const char*, const char*, size_t);
-	const void __findSection(const char* section, comparefunc* _cmpfunc);
+	void __findSection(const char* section, comparefunc* _cmpfunc);
 };
 
 #endif

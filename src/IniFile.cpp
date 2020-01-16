@@ -30,16 +30,15 @@ const IniFileSection& IniFile::findSection(const char* section)
 	__findSection(section, f);
 	return (const IniFileSection&)(*this);
 }
-/*
+
 const IniFileSection& IniFile::findSection_P(PGM_P section)
 {
 	comparefunc* f = (comparefunc*)(_caseSensitive ? &strncmp_P : &strncasecmp_P);
 	__findSection(section, f);
 	return (const IniFileSection&)(*this);
 }
-*/
 
-const void IniFile::__findSection(const char* section, comparefunc* _cmpfunc)
+void IniFile::__findSection(const char* section, comparefunc* _cmpfunc)
 {
 	// start at position 0
 	_readLinePosition = 0;
@@ -95,21 +94,21 @@ const void IniFile::__findSection(const char* section, comparefunc* _cmpfunc)
 }
 
 // From the current file location look for the matching key. If
-IniFileSectionKey IniFileSection::findKey(const char* key)
+IniFileSectionKey IniFileSection::findKey(const char* key, bool withinSection)
 {
 	comparefunc* f = (_caseSensitive ? &strncmp : &strncasecmp);
-	char* c= __findKey(key, f);
+	char* c= __findKey(key, f,  withinSection);
 	return IniFileSectionKey(c);
 }
 
-// IniFileSectionKey IniFileSection::findKey_P(PGM_P key)
-// {
-// 	comparefunc* f = (comparefunc*)(_caseSensitive ? &strncmp_P : &strncasecmp_P);
-// 	const char* c= __findKey(key, f);
-// 	return IniFileSectionKey(c);
-// }
+IniFileSectionKey IniFileSection::findKey_P(PGM_P key, bool withinSection)
+{
+	comparefunc* f = (comparefunc*)(_caseSensitive ? &strncmp_P : &strncasecmp_P);
+	char* c= __findKey(key, f,  withinSection);
+	return IniFileSectionKey(c);
+}
 
-char* IniFileSection::__findKey(const char* key, comparefunc* _cmpfunc)
+char* IniFileSection::__findKey(const char* key, comparefunc* _cmpfunc, bool withinSection)
 {
 	// can only search key, if we have found the section
 	if (_error != errorNoError && _error != errorKeyNotFound)
@@ -144,11 +143,17 @@ char* IniFileSection::__findKey(const char* key, comparefunc* _cmpfunc)
 		if (IniFile::isCommentChar(*cp)) 
 			continue;
 
-		if (*cp == '[') 
+		if (*cp == '[')   
 		{
 			// Start of a new section
-			_error = errorKeyNotFound;
-			return NULL;
+			if (withinSection)
+			{
+				_error = errorKeyNotFound;
+				return NULL;
+			}
+
+			// else ignore and continue next line
+			continue;
 		}
 
 		// Find '='
@@ -185,15 +190,10 @@ char* IniFileSection::__findKey(const char* key, comparefunc* _cmpfunc)
 	return NULL;
 }
 
-IniFileState::error_t IniFileSectionKey::getValue(char* toBuffer, size_t toLen) const
+template<>
+IniFileState::error_t IniFileSectionKey::getValue(String& val) const
 {
-	if (_buffer == NULL)
-		return IniFileState::errorKeyNotFound;
-
-	if (strlen(_buffer) >= toLen)
-		return IniFileState::errorBufferTooSmall;
-
-	strcpy(toBuffer, _buffer);
+	val = _buffer;
 	return IniFileState::errorNoError;
 }
 
@@ -443,7 +443,7 @@ IniFileState::error_t IniFileSectionKey::__str_to_numeric(uint8_t* array,
 
 IniFile::error_t IniFile::readLine(File &file, char *buffer, size_t len, uint32_t &pos)
 {
-	printf("Call readline(..., pos=%u)\n", pos);
+	//printf("Call readline(..., pos=%u)\n", pos);
 	if (!file)
 		return errorFileNotOpen;
 
