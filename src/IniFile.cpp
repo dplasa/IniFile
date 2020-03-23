@@ -31,10 +31,10 @@ const IniFileSection& IniFile::findSection(const char* section)
 	return (const IniFileSection&)(*this);
 }
 
-const IniFileSection& IniFile::findSection_P(PGM_P section)
+const IniFileSection& IniFile::findSection(const __FlashStringHelper* section)
 {
 	comparefunc* f = (comparefunc*)(_caseSensitive ? &strncmp_P : &strncasecmp_P);
-	__findSection(section, f);
+	__findSection((PGM_P)section, f);
 	return (const IniFileSection&)(*this);
 }
 
@@ -101,10 +101,10 @@ IniFileSectionKey IniFileSection::findKey(const char* key, bool withinSection)
 	return IniFileSectionKey(c);
 }
 
-IniFileSectionKey IniFileSection::findKey_P(PGM_P key, bool withinSection)
+IniFileSectionKey IniFileSection::findKey(const __FlashStringHelper* key, bool withinSection)
 {
 	comparefunc* f = (comparefunc*)(_caseSensitive ? &strncmp_P : &strncasecmp_P);
-	char* c= __findKey(key, f,  withinSection);
+	char* c= __findKey((PGM_P)key, f,  withinSection);
 	return IniFileSectionKey(c);
 }
 

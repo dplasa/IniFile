@@ -1,7 +1,7 @@
 #ifndef _INIFILE_H
 #define _INIFILE_H
 
-#define INIFILE_VERSION "2.0.0"
+#define INIFILE_VERSION "2.0.1"
 
 #include <stdint.h>
 #include <IPAddress.h>
@@ -93,7 +93,7 @@ public:
 
 	// get a key from a section
 	IniFileSectionKey findKey(const char* key, bool withinSection=true);
-	IniFileSectionKey findKey_P(PGM_P key, bool withinSection=true);
+	IniFileSectionKey findKey(const __FlashStringHelper *key, bool withinSection=true);
 
 private:
 	typedef int comparefunc(const char*, const char*, size_t);
@@ -154,7 +154,7 @@ public:
 
 	// find a section from the file
 	const IniFileSection& findSection(const char* section);
-	const IniFileSection& findSection_P(PGM_P section);
+	const IniFileSection& findSection(const __FlashStringHelper* section);
 
 	// Utility function to read a line from a file, make available to all
 	static error_t readLine(File &file, char *buffer, size_t len, uint32_t &pos);

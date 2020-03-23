@@ -12,18 +12,11 @@ IniFileSectionKey KEYWORD1
 # Methods and Functions (KEYWORD2)
 #######################################
 findSection	KEYWORD2
-findSection_P	KEYWORD2
 findKey		KEYWORD2
-findKey_P	KEYWORD2
-clearError	KEYWORD2
-getCaseSensitive	KEYWORD2
-getError	KEYWORD2
-getFilename	KEYWORD2
 getIPAddress	KEYWORD2
 getHexByteArray	KEYWORD2
 getNumericByteArray	KEYWORD2
 getValue	KEYWORD2
-isCommentChar	KEYWORD2
 readLine	KEYWORD2
 removeTrailingWhiteSpace	KEYWORD2
 setCaseSensitive	KEYWORD2
