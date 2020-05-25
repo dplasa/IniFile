@@ -24,10 +24,10 @@ IniFileState::error_t IniFile::validate() const
 	}
 }
 
-const IniFileSection& IniFile::findSection(const char* section)
+const IniFileSection& IniFile::findSection(const String& section)
 {
 	comparefunc* f = (_caseSensitive ? &strncmp : &strncasecmp);
-	__findSection(section, f);
+	__findSection(section.c_str(), f);
 	return (const IniFileSection&)(*this);
 }
 
@@ -94,10 +94,10 @@ void IniFile::__findSection(const char* section, comparefunc* _cmpfunc)
 }
 
 // From the current file location look for the matching key. If
-IniFileSectionKey IniFileSection::findKey(const char* key, bool withinSection)
+IniFileSectionKey IniFileSection::findKey(const String& key, bool withinSection)
 {
 	comparefunc* f = (_caseSensitive ? &strncmp : &strncasecmp);
-	char* c= __findKey(key, f,  withinSection);
+	char* c= __findKey(key.c_str(), f,  withinSection);
 	return IniFileSectionKey(c);
 }
 

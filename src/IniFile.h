@@ -1,7 +1,7 @@
 #ifndef _INIFILE_H
 #define _INIFILE_H
 
-#define INIFILE_VERSION "2.0.1"
+#define INIFILE_VERSION "2.0.2"
 
 #include <stdint.h>
 #include <IPAddress.h>
@@ -92,7 +92,7 @@ public:
 	}
 
 	// get a key from a section
-	IniFileSectionKey findKey(const char* key, bool withinSection=true);
+	IniFileSectionKey findKey(const String& key, bool withinSection=true);
 	IniFileSectionKey findKey(const __FlashStringHelper *key, bool withinSection=true);
 
 private:
@@ -153,7 +153,7 @@ public:
 	IniFileState::error_t validate() const;
 
 	// find a section from the file
-	const IniFileSection& findSection(const char* section);
+	const IniFileSection& findSection(const String& section);
 	const IniFileSection& findSection(const __FlashStringHelper* section);
 
 	// Utility function to read a line from a file, make available to all
